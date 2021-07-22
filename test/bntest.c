@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2019 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -10,6 +10,9 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef __TANDEM
+# include <strings.h> /* strcasecmp */
+#endif
 #include <ctype.h>
 
 #include <openssl/bn.h>
@@ -25,7 +28,7 @@
 #endif
 
 /*
- * Things in boring, not in openssl.  TODO we should add them.
+ * Things in boring, not in openssl.
  */
 #define HAVE_BN_PADDED 0
 #define HAVE_BN_SQRT 0
@@ -305,6 +308,75 @@ static int test_div_recip(void)
     return st;
 }
 
+static struct {
+    int n, divisor, result, remainder;
+} signed_mod_tests[] = {
+    {  10,   3,   3,   1 },
+    { -10,   3,  -3,  -1 },
+    {  10,  -3,  -3,   1 },
+    { -10,  -3,   3,  -1 },
+};
+
+static BIGNUM *set_signed_bn(int value)
+{
+    BIGNUM *bn = BN_new();
+
+    if (bn == NULL)
+        return NULL;
+    if (!BN_set_word(bn, value < 0 ? -value : value)) {
+        BN_free(bn);
+        return NULL;
+    }
+    BN_set_negative(bn, value < 0);
+    return bn;
+}
+
+static int test_signed_mod_replace_ab(int n)
+{
+    BIGNUM *a = NULL, *b = NULL, *c = NULL, *d = NULL;
+    int st = 0;
+
+    if (!TEST_ptr(a = set_signed_bn(signed_mod_tests[n].n))
+            || !TEST_ptr(b = set_signed_bn(signed_mod_tests[n].divisor))
+            || !TEST_ptr(c = set_signed_bn(signed_mod_tests[n].result))
+            || !TEST_ptr(d = set_signed_bn(signed_mod_tests[n].remainder)))
+        goto err;
+
+    if (TEST_true(BN_div(a, b, a, b, ctx))
+            && TEST_BN_eq(a, c)
+            && TEST_BN_eq(b, d))
+        st = 1;
+ err:
+    BN_free(a);
+    BN_free(b);
+    BN_free(c);
+    BN_free(d);
+    return st;
+}
+
+static int test_signed_mod_replace_ba(int n)
+{
+    BIGNUM *a = NULL, *b = NULL, *c = NULL, *d = NULL;
+    int st = 0;
+
+    if (!TEST_ptr(a = set_signed_bn(signed_mod_tests[n].n))
+            || !TEST_ptr(b = set_signed_bn(signed_mod_tests[n].divisor))
+            || !TEST_ptr(c = set_signed_bn(signed_mod_tests[n].result))
+            || !TEST_ptr(d = set_signed_bn(signed_mod_tests[n].remainder)))
+        goto err;
+
+    if (TEST_true(BN_div(b, a, a, b, ctx))
+            && TEST_BN_eq(b, c)
+            && TEST_BN_eq(a, d))
+        st = 1;
+ err:
+    BN_free(a);
+    BN_free(b);
+    BN_free(c);
+    BN_free(d);
+    return st;
+}
+
 static int test_mod(void)
 {
     BIGNUM *a = NULL, *b = NULL, *c = NULL, *d = NULL, *e = NULL;
@@ -326,8 +398,10 @@ static int test_mod(void)
         BN_set_negative(b, rand_neg());
         if (!(TEST_true(BN_mod(c, a, b, ctx))
                 && TEST_true(BN_div(d, e, a, b, ctx))
-                && TEST_true(BN_sub(e, e, c))
-                && TEST_BN_eq_zero(e)))
+                && TEST_BN_eq(e, c)
+                && TEST_true(BN_mul(c, d, b, ctx))
+                && TEST_true(BN_add(d, c, e))
+                && TEST_BN_eq(d, a)))
             goto err;
     }
     st = 1;
@@ -1097,7 +1171,7 @@ static int file_sum(STANZA *s)
     /*
      * Test that the functions work when |r| and |a| point to the same BIGNUM,
      * or when |r| and |b| point to the same BIGNUM.
-     * TODO: Test where all of |r|, |a|, and |b| point to the same BIGNUM.
+     * There is no test for all of |r|, |a|, and |b| pointint to the same BIGNUM.
      */
     if (!TEST_true(BN_copy(ret, a))
             || !TEST_true(BN_add(ret, ret, b))
@@ -1124,7 +1198,6 @@ static int file_sum(STANZA *s)
      * documented as having. Note that these functions are frequently used
      * when the prerequisites don't hold. In those cases, they are supposed
      * to work as if the prerequisite hold, but we don't test that yet.
-     * TODO: test that.
      */
     if (!BN_is_negative(a) && !BN_is_negative(b) && BN_cmp(a, b) >= 0) {
         if (!TEST_true(BN_uadd(ret, a, b))
@@ -1137,7 +1210,8 @@ static int file_sum(STANZA *s)
         /*
          * Test that the functions work when |r| and |a| point to the same
          * BIGNUM, or when |r| and |b| point to the same BIGNUM.
-         * TODO: Test where all of |r|, |a|, and |b| point to the same BIGNUM.
+         * There is no test for all of |r|, |a|, and |b| pointint to the same
+         * BIGNUM.
          */
         if (!TEST_true(BN_copy(ret, a))
                 || !TEST_true(BN_uadd(ret, ret, b))
@@ -2872,6 +2946,8 @@ int setup_tests(void)
     if (n == 0) {
         ADD_TEST(test_sub);
         ADD_TEST(test_div_recip);
+        ADD_ALL_TESTS(test_signed_mod_replace_ab, OSSL_NELEM(signed_mod_tests));
+        ADD_ALL_TESTS(test_signed_mod_replace_ba, OSSL_NELEM(signed_mod_tests));
         ADD_TEST(test_mod);
         ADD_TEST(test_modexp_mont5);
         ADD_TEST(test_kronecker);

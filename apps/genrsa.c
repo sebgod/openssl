@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -32,10 +32,13 @@ static int verbose = 0;
 static int genrsa_cb(EVP_PKEY_CTX *ctx);
 
 typedef enum OPTION_choice {
-    OPT_ERR = -1, OPT_EOF = 0, OPT_HELP,
-    OPT_3, OPT_F4, OPT_ENGINE,
+    OPT_COMMON,
+#ifndef OPENSSL_NO_DEPRECATED_3_0
+    OPT_3,
+#endif
+    OPT_F4, OPT_ENGINE,
     OPT_OUT, OPT_PASSOUT, OPT_CIPHER, OPT_PRIMES, OPT_VERBOSE,
-    OPT_R_ENUM, OPT_PROV_ENUM
+    OPT_R_ENUM, OPT_PROV_ENUM, OPT_TRADITIONAL
 } OPTION_CHOICE;
 
 const OPTIONS genrsa_options[] = {
@@ -48,15 +51,19 @@ const OPTIONS genrsa_options[] = {
 #endif
 
     OPT_SECTION("Input"),
-    {"3", OPT_3, '-', "Use 3 for the E value"},
-    {"F4", OPT_F4, '-', "Use F4 (0x10001) for the E value"},
-    {"f4", OPT_F4, '-', "Use F4 (0x10001) for the E value"},
+#ifndef OPENSSL_NO_DEPRECATED_3_0
+    {"3", OPT_3, '-', "(deprecated) Use 3 for the E value"},
+#endif
+    {"F4", OPT_F4, '-', "Use the Fermat number F4 (0x10001) for the E value"},
+    {"f4", OPT_F4, '-', "Use the Fermat number F4 (0x10001) for the E value"},
 
     OPT_SECTION("Output"),
     {"out", OPT_OUT, '>', "Output the key to specified file"},
     {"passout", OPT_PASSOUT, 's', "Output file pass phrase source"},
     {"primes", OPT_PRIMES, 'p', "Specify number of primes"},
     {"verbose", OPT_VERBOSE, '-', "Verbose output"},
+    {"traditional", OPT_TRADITIONAL, '-',
+     "Use traditional format for private keys"},
     {"", OPT_CIPHER, '-', "Encrypt the output with any supported cipher"},
 
     OPT_R_OPTIONS,
@@ -72,18 +79,16 @@ int genrsa_main(int argc, char **argv)
     BN_GENCB *cb = BN_GENCB_new();
     ENGINE *eng = NULL;
     BIGNUM *bn = BN_new();
-    RSA *rsa;
     BIO *out = NULL;
-    const BIGNUM *e;
     EVP_PKEY *pkey = NULL;
     EVP_PKEY_CTX *ctx = NULL;
-    const EVP_CIPHER *enc = NULL;
+    EVP_CIPHER *enc = NULL;
     int ret = 1, num = DEFBITS, private = 0, primes = DEFPRIMES;
     unsigned long f4 = RSA_F4;
     char *outfile = NULL, *passoutarg = NULL, *passout = NULL;
-    char *prog, *hexe, *dece;
+    char *prog, *hexe, *dece, *ciphername = NULL;
     OPTION_CHOICE o;
-    unsigned char *ebuf = NULL;
+    int traditional = 0;
 
     if (bn == NULL || cb == NULL)
         goto end;
@@ -100,9 +105,11 @@ opthelp:
             ret = 0;
             opt_help(genrsa_options);
             goto end;
+#ifndef OPENSSL_NO_DEPRECATED_3_0
         case OPT_3:
             f4 = RSA_3;
             break;
+#endif
         case OPT_F4:
             f4 = RSA_F4;
             break;
@@ -124,18 +131,21 @@ opthelp:
             passoutarg = opt_arg();
             break;
         case OPT_CIPHER:
-            if (!opt_cipher(opt_unknown(), &enc))
-                goto end;
+            ciphername = opt_unknown();
             break;
         case OPT_PRIMES:
-            if (!opt_int(opt_arg(), &primes))
-                goto end;
+            primes = opt_int_arg();
             break;
         case OPT_VERBOSE:
             verbose = 1;
             break;
+        case OPT_TRADITIONAL:
+            traditional = 1;
+            break;
         }
     }
+
+    /* One optional argument, the bitsize. */
     argc = opt_num_rest();
     argv = opt_rest();
 
@@ -152,7 +162,14 @@ opthelp:
         goto opthelp;
     }
 
+    if (!app_RAND_load())
+        goto end;
+
     private = 1;
+    if (ciphername != NULL) {
+        if (!opt_cipher(ciphername, &enc))
+            goto end;
+    }
     if (!app_passwd(NULL, passoutarg, NULL, &passout)) {
         BIO_printf(bio_err, "Error getting password\n");
         goto end;
@@ -162,7 +179,7 @@ opthelp:
     if (out == NULL)
         goto end;
 
-    if (!init_gen_str(&ctx, "RSA", eng, 0))
+    if (!init_gen_str(&ctx, "RSA", eng, 0, NULL, NULL))
         goto end;
 
     EVP_PKEY_CTX_set_cb(ctx, genrsa_cb);
@@ -176,7 +193,7 @@ opthelp:
         BIO_printf(bio_err, "Error allocating RSA public exponent\n");
         goto end;
     }
-    if (EVP_PKEY_CTX_set_rsa_keygen_pubexp(ctx, bn) <= 0) {
+    if (EVP_PKEY_CTX_set1_rsa_keygen_pubexp(ctx, bn) <= 0) {
         BIO_printf(bio_err, "Error setting RSA public exponent\n");
         goto end;
     }
@@ -184,18 +201,14 @@ opthelp:
         BIO_printf(bio_err, "Error setting number of primes\n");
         goto end;
     }
-    if (verbose)
-        BIO_printf(bio_err, "Generating RSA private key, %d bit long modulus (%d primes)\n",
-                   num, primes);
-    if (!EVP_PKEY_keygen(ctx, &pkey)) {
-        BIO_printf(bio_err, "Error generating RSA key\n");
-        goto end;
-    }
+    pkey = app_keygen(ctx, "RSA", num, verbose);
 
     if (verbose) {
-        if ((rsa = EVP_PKEY_get0_RSA(pkey)) != NULL) {
-            RSA_get0_key(rsa, NULL, &e, NULL);
-        } else {
+        BIGNUM *e = NULL;
+
+        /* Every RSA key has an 'e' */
+        EVP_PKEY_get_bn_param(pkey, "e", &e);
+        if (e == NULL) {
             BIO_printf(bio_err, "Error cannot access RSA e\n");
             goto end;
         }
@@ -206,9 +219,16 @@ opthelp:
         }
         OPENSSL_free(hexe);
         OPENSSL_free(dece);
+        BN_free(e);
     }
-    if (!PEM_write_bio_PrivateKey(out, pkey, enc, NULL, 0, NULL, passout))
-        goto end;
+    if (traditional) {
+        if (!PEM_write_bio_PrivateKey_traditional(out, pkey, enc, NULL, 0,
+                                                  NULL, passout))
+            goto end;
+    } else {
+        if (!PEM_write_bio_PrivateKey(out, pkey, enc, NULL, 0, NULL, passout))
+            goto end;
+    }
 
     ret = 0;
  end:
@@ -216,10 +236,10 @@ opthelp:
     BN_GENCB_free(cb);
     EVP_PKEY_CTX_free(ctx);
     EVP_PKEY_free(pkey);
+    EVP_CIPHER_free(enc);
     BIO_free_all(out);
     release_engine(eng);
     OPENSSL_free(passout);
-    OPENSSL_free(ebuf);
     if (ret != 0)
         ERR_print_errors(bio_err);
     return ret;

@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -18,6 +18,7 @@
 #include "internal/cryptlib.h"
 #include <openssl/bn.h>
 #include <openssl/self_test.h>
+#include "prov/providercommon.h"
 #include "crypto/dsa.h"
 #include "dsa_local.h"
 
@@ -39,8 +40,8 @@ int DSA_generate_key(DSA *dsa)
     return dsa_keygen(dsa, 0);
 }
 
-int dsa_generate_public_key(BN_CTX *ctx, const DSA *dsa, const BIGNUM *priv_key,
-                            BIGNUM *pub_key)
+int ossl_dsa_generate_public_key(BN_CTX *ctx, const DSA *dsa,
+                                 const BIGNUM *priv_key, BIGNUM *pub_key)
 {
     int ret = 0;
     BIGNUM *prk = BN_new();
@@ -74,13 +75,19 @@ static int dsa_keygen(DSA *dsa, int pairwise_test)
         priv_key = dsa->priv_key;
     }
 
+    /* Do a partial check for invalid p, q, g */
+    if (!ossl_ffc_params_simple_validate(dsa->libctx, &dsa->params,
+                                         FFC_PARAM_TYPE_DSA, NULL))
+        goto err;
+
     /*
      * For FFC FIPS 186-4 keygen
      * security strength s = 112,
      * Max Private key size N = len(q)
      */
-    if (!ffc_generate_private_key(ctx, &dsa->params, BN_num_bits(dsa->params.q),
-                                  MIN_STRENGTH, priv_key))
+    if (!ossl_ffc_generate_private_key(ctx, &dsa->params,
+                                       BN_num_bits(dsa->params.q),
+                                       MIN_STRENGTH, priv_key))
         goto err;
 
     if (dsa->pub_key == NULL) {
@@ -90,7 +97,7 @@ static int dsa_keygen(DSA *dsa, int pairwise_test)
         pub_key = dsa->pub_key;
     }
 
-    if (!dsa_generate_public_key(ctx, dsa, priv_key, pub_key))
+    if (!ossl_dsa_generate_public_key(ctx, dsa, priv_key, pub_key))
         goto err;
 
     dsa->priv_key = priv_key;
@@ -108,8 +115,11 @@ static int dsa_keygen(DSA *dsa, int pairwise_test)
         OSSL_SELF_TEST_get_callback(dsa->libctx, &cb, &cbarg);
         ok = dsa_keygen_pairwise_test(dsa, cb, cbarg);
         if (!ok) {
+            ossl_set_error_state(OSSL_SELF_TEST_TYPE_PCT);
             BN_free(dsa->pub_key);
             BN_clear_free(dsa->priv_key);
+            dsa->pub_key = NULL;
+            dsa->priv_key = NULL;
             BN_CTX_free(ctx);
             return ok;
         }

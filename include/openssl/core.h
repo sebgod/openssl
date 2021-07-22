@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -9,6 +9,7 @@
 
 #ifndef OPENSSL_CORE_H
 # define OPENSSL_CORE_H
+# pragma once
 
 # include <stddef.h>
 # include <openssl/types.h>
@@ -25,9 +26,14 @@ extern "C" {
  * to communicate data between them.
  */
 
+/* Opaque handles to be used with core upcall functions from providers */
+typedef struct ossl_core_handle_st OSSL_CORE_HANDLE;
+typedef struct openssl_core_ctx_st OPENSSL_CORE_CTX;
+typedef struct ossl_core_bio_st OSSL_CORE_BIO;
+
 /*
- * Dispatch table element.  function_id numbers are defined further down,
- * see macros with '_FUNC' in their names.
+ * Dispatch table element.  function_id numbers and the functions are defined
+ * in core_dispatch.h, see macros with 'OSSL_CORE_MAKE_FUNC' in their names.
  *
  * An array of these is always terminated by function_id == 0
  */
@@ -64,6 +70,7 @@ struct ossl_algorithm_st {
     const char *algorithm_names;     /* key */
     const char *property_definition; /* key */
     const OSSL_DISPATCH *implementation;
+    const char *algorithm_description;
 };
 
 /*
@@ -102,18 +109,18 @@ struct ossl_param_st {
 # define OSSL_PARAM_REAL                 3
 /*-
  * OSSL_PARAM_UTF8_STRING
- * is a printable string.  Is expteced to be printed as it is.
+ * is a printable string.  It is expected to be printed as it is.
  */
 # define OSSL_PARAM_UTF8_STRING          4
 /*-
  * OSSL_PARAM_OCTET_STRING
- * is a string of bytes with no further specification.  Is expected to be
+ * is a string of bytes with no further specification.  It is expected to be
  * printed as a hexdump.
  */
 # define OSSL_PARAM_OCTET_STRING         5
 /*-
  * OSSL_PARAM_UTF8_PTR
- * is a pointer to a printable string.  Is expteced to be printed as it is.
+ * is a pointer to a printable string.  It is expected to be printed as it is.
  *
  * The difference between this and OSSL_PARAM_UTF8_STRING is that only pointers
  * are manipulated for this type.
@@ -171,7 +178,7 @@ typedef void (*OSSL_thread_stop_handler_fn)(void *arg);
  * module, that module is not an OpenSSL provider module.
  */
 /*-
- * |provider|   pointer to opaque type OSSL_PROVIDER.  This can be used
+ * |handle|     pointer to opaque type OSSL_CORE_HANDLE.  This can be used
  *              together with some functions passed via |in| to query data.
  * |in|         is the array of functions that the Core passes to the provider.
  * |out|        will be the array of base functions that the provider passes
@@ -180,7 +187,7 @@ typedef void (*OSSL_thread_stop_handler_fn)(void *arg);
  *              provider needs it.  This value is passed to other provider
  *              functions, notably other context constructors.
  */
-typedef int (OSSL_provider_init_fn)(const OSSL_PROVIDER *provider,
+typedef int (OSSL_provider_init_fn)(const OSSL_CORE_HANDLE *handle,
                                     const OSSL_DISPATCH *in,
                                     const OSSL_DISPATCH **out,
                                     void **provctx);
@@ -207,7 +214,8 @@ extern OSSL_provider_init_fn OSSL_provider_init;
  * application callback it knows about.
  */
 typedef int (OSSL_CALLBACK)(const OSSL_PARAM params[], void *arg);
-
+typedef int (OSSL_INOUT_CALLBACK)(const OSSL_PARAM in_params[],
+                                  OSSL_PARAM out_params[], void *arg);
 /*
  * Passphrase callback function signature
  *

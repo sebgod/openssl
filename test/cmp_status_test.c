@@ -9,9 +9,7 @@
  * https://www.openssl.org/source/license.html
  */
 
-#include "cmp_testlib.h"
-
-DEFINE_STACK_OF(ASN1_UTF8STRING)
+#include "helpers/cmp_testlib.h"
 
 typedef struct test_fixture {
     const char *test_case_name;

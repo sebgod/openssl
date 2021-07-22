@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2019, Oracle and/or its affiliates.  All rights reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -10,6 +10,7 @@
 
 #ifndef OPENSSL_PARAMS_H
 # define OPENSSL_PARAMS_H
+# pragma once
 
 # include <openssl/core.h>
 # include <openssl/bn.h>
@@ -49,6 +50,8 @@ extern "C" {
                     sizeof(uint64_t))
 # define OSSL_PARAM_size_t(key, addr) \
     OSSL_PARAM_DEFN((key), OSSL_PARAM_UNSIGNED_INTEGER, (addr), sizeof(size_t))
+# define OSSL_PARAM_time_t(key, addr) \
+    OSSL_PARAM_DEFN((key), OSSL_PARAM_INTEGER, (addr), sizeof(time_t))
 # define OSSL_PARAM_double(key, addr) \
     OSSL_PARAM_DEFN((key), OSSL_PARAM_REAL, (addr), sizeof(double))
 
@@ -60,9 +63,9 @@ extern "C" {
     OSSL_PARAM_DEFN((key), OSSL_PARAM_OCTET_STRING, (addr), sz)
 
 # define OSSL_PARAM_utf8_ptr(key, addr, sz) \
-    OSSL_PARAM_DEFN((key), OSSL_PARAM_UTF8_PTR, &(addr), sz)
+    OSSL_PARAM_DEFN((key), OSSL_PARAM_UTF8_PTR, (addr), sz)
 # define OSSL_PARAM_octet_ptr(key, addr, sz) \
-    OSSL_PARAM_DEFN((key), OSSL_PARAM_OCTET_PTR, &(addr), sz)
+    OSSL_PARAM_DEFN((key), OSSL_PARAM_OCTET_PTR, (addr), sz)
 
 /* Search an OSSL_PARAM array for a matching name */
 OSSL_PARAM *OSSL_PARAM_locate(OSSL_PARAM *p, const char *key);
@@ -78,6 +81,7 @@ OSSL_PARAM OSSL_PARAM_construct_uint32(const char *key, uint32_t *buf);
 OSSL_PARAM OSSL_PARAM_construct_int64(const char *key, int64_t *buf);
 OSSL_PARAM OSSL_PARAM_construct_uint64(const char *key, uint64_t *buf);
 OSSL_PARAM OSSL_PARAM_construct_size_t(const char *key, size_t *buf);
+OSSL_PARAM OSSL_PARAM_construct_time_t(const char *key, time_t *buf);
 OSSL_PARAM OSSL_PARAM_construct_BN(const char *key, unsigned char *buf,
                                    size_t bsize);
 OSSL_PARAM OSSL_PARAM_construct_double(const char *key, double *buf);
@@ -105,6 +109,7 @@ int OSSL_PARAM_get_uint32(const OSSL_PARAM *p, uint32_t *val);
 int OSSL_PARAM_get_int64(const OSSL_PARAM *p, int64_t *val);
 int OSSL_PARAM_get_uint64(const OSSL_PARAM *p, uint64_t *val);
 int OSSL_PARAM_get_size_t(const OSSL_PARAM *p, size_t *val);
+int OSSL_PARAM_get_time_t(const OSSL_PARAM *p, time_t *val);
 
 int OSSL_PARAM_set_int(OSSL_PARAM *p, int val);
 int OSSL_PARAM_set_uint(OSSL_PARAM *p, unsigned int val);
@@ -115,6 +120,7 @@ int OSSL_PARAM_set_uint32(OSSL_PARAM *p, uint32_t val);
 int OSSL_PARAM_set_int64(OSSL_PARAM *p, int64_t val);
 int OSSL_PARAM_set_uint64(OSSL_PARAM *p, uint64_t val);
 int OSSL_PARAM_set_size_t(OSSL_PARAM *p, size_t val);
+int OSSL_PARAM_set_time_t(OSSL_PARAM *p, time_t val);
 
 int OSSL_PARAM_get_double(const OSSL_PARAM *p, double *val);
 int OSSL_PARAM_set_double(OSSL_PARAM *p, double val);
@@ -137,8 +143,16 @@ int OSSL_PARAM_get_octet_ptr(const OSSL_PARAM *p, const void **val,
 int OSSL_PARAM_set_octet_ptr(OSSL_PARAM *p, const void *val,
                              size_t used_len);
 
+int OSSL_PARAM_get_utf8_string_ptr(const OSSL_PARAM *p, const char **val);
+int OSSL_PARAM_get_octet_string_ptr(const OSSL_PARAM *p, const void **val,
+                                    size_t *used_len);
+
 int OSSL_PARAM_modified(const OSSL_PARAM *p);
 void OSSL_PARAM_set_all_unmodified(OSSL_PARAM *p);
+
+OSSL_PARAM *OSSL_PARAM_dup(const OSSL_PARAM *p);
+OSSL_PARAM *OSSL_PARAM_merge(const OSSL_PARAM *p1, const OSSL_PARAM *p2);
+void OSSL_PARAM_free(OSSL_PARAM *p);
 
 # ifdef  __cplusplus
 }

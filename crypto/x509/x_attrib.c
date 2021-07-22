@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -13,8 +13,6 @@
 #include <openssl/asn1t.h>
 #include <openssl/x509.h>
 #include "x509_local.h"
-
-DEFINE_STACK_OF(ASN1_TYPE)
 
 /*-
  * X509_ATTRIBUTE: this has the following form:
@@ -39,10 +37,13 @@ X509_ATTRIBUTE *X509_ATTRIBUTE_create(int nid, int atrtype, void *value)
 {
     X509_ATTRIBUTE *ret = NULL;
     ASN1_TYPE *val = NULL;
+    ASN1_OBJECT *oid;
 
+    if ((oid = OBJ_nid2obj(nid)) == NULL)
+        return NULL;
     if ((ret = X509_ATTRIBUTE_new()) == NULL)
         return NULL;
-    ret->object = OBJ_nid2obj(nid);
+    ret->object = oid;
     if ((val = ASN1_TYPE_new()) == NULL)
         goto err;
     if (!sk_ASN1_TYPE_push(ret->set, val))

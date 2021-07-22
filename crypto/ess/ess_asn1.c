@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -9,6 +9,7 @@
 
 #include <openssl/err.h>
 #include <openssl/asn1t.h>
+#include <openssl/cms.h>
 #include <openssl/ess.h>
 #include <openssl/x509v3.h>
 #include "crypto/ess.h"
@@ -34,7 +35,7 @@ IMPLEMENT_ASN1_DUP_FUNCTION(ESS_CERT_ID)
 ASN1_SEQUENCE(ESS_SIGNING_CERT) = {
         ASN1_SEQUENCE_OF(ESS_SIGNING_CERT, cert_ids, ESS_CERT_ID),
         ASN1_SEQUENCE_OF_OPT(ESS_SIGNING_CERT, policy_info, POLICYINFO)
-} static_ASN1_SEQUENCE_END(ESS_SIGNING_CERT)
+} ASN1_SEQUENCE_END(ESS_SIGNING_CERT)
 
 IMPLEMENT_ASN1_FUNCTIONS(ESS_SIGNING_CERT)
 IMPLEMENT_ASN1_DUP_FUNCTION(ESS_SIGNING_CERT)
@@ -51,7 +52,7 @@ IMPLEMENT_ASN1_DUP_FUNCTION(ESS_CERT_ID_V2)
 ASN1_SEQUENCE(ESS_SIGNING_CERT_V2) = {
         ASN1_SEQUENCE_OF(ESS_SIGNING_CERT_V2, cert_ids, ESS_CERT_ID_V2),
         ASN1_SEQUENCE_OF_OPT(ESS_SIGNING_CERT_V2, policy_info, POLICYINFO)
-} static_ASN1_SEQUENCE_END(ESS_SIGNING_CERT_V2)
+} ASN1_SEQUENCE_END(ESS_SIGNING_CERT_V2)
 
 IMPLEMENT_ASN1_FUNCTIONS(ESS_SIGNING_CERT_V2)
 IMPLEMENT_ASN1_DUP_FUNCTION(ESS_SIGNING_CERT_V2)

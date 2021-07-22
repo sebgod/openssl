@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# Copyright 2015-2020 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2015-2021 The OpenSSL Project Authors. All Rights Reserved.
 #
 # Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
@@ -30,7 +30,6 @@ plan skip_all => "$test_name needs TLS enabled"
        || (!disabled("tls1_3") && disabled("tls1_2"));
 
 $ENV{OPENSSL_ia32cap} = '~0x200000200000000';
-$ENV{CTLOG_FILE} = srctop_file("test", "ct", "log_list.cnf");
 
 my $proxy = TLSProxy::Proxy->new(
     undef,
@@ -240,6 +239,7 @@ checkhandshake($proxy, checkhandshake::CLIENT_AUTH_HANDSHAKE,
 #Test 7: A handshake with a renegotiation
 $proxy->clear();
 $proxy->clientflags("-no_tls1_3");
+$proxy->serverflags("-client_renegotiation");
 $proxy->reneg(1);
 $proxy->start();
 checkhandshake($proxy, checkhandshake::RENEG_HANDSHAKE,

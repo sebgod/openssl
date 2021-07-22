@@ -9,14 +9,28 @@ EVP_KEYMGMT-X25519, EVP_KEYMGMT-X448, EVP_KEYMGMT-ED25519, EVP_KEYMGMT-ED448
 =head1 DESCRIPTION
 
 The B<X25519>, B<X448>, B<ED25519> and B<ED448> keytypes are
-implemented in OpenSSL's default provider.
+implemented in OpenSSL's default and FIPS providers.  These implementations
+support the associated key, containing the public key I<pub> and the
+private key I<priv>.
+
+In the FIPS provider they are non-approved algorithms and do not have the
+"fips=yes" property set.
+No additional parameters can be set during key generation.
+
 
 =head2 Common X25519, X448, ED25519 and ED448 parameters
 
-The following Import/Export types are available for the built-in X25519, X448,
-ED25519 and X448 algorithms:
+In addition to the common parameters that all keytypes should support (see
+L<provider-keymgmt(7)/Common parameters>), the implementation of these keytypes
+support the following.
 
 =over 4
+
+=item "group" (B<OSSL_PKEY_PARAM_GROUP_NAME>) <UTF8 string>
+
+This is only supported by X25519 and X448. The group name must be "x25519" or
+"x448" respectively for those algorithms. This is only present for consistency
+with other key exchange algorithms and is typically not needed.
 
 =item "pub" (B<OSSL_PKEY_PARAM_PUB_KEY>) <octet string>
 
@@ -26,13 +40,19 @@ The public key value.
 
 The private key value.
 
+=item "encoded-pub-key" (B<OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY>) <octet string>
+
+Used for getting and setting the encoding of a public key for the B<X25519> and
+B<X448> key types. Public keys are expected be encoded in a format as defined by
+RFC7748.
+
 =back
 
 =head2 ED25519 and ED448 parameters
 
 =over 4
 
-=item "mandatory-digest" (B<OSSL_PKEY_PARAM_MANDATORY_DIGEST>) <utf8 string>
+=item "mandatory-digest" (B<OSSL_PKEY_PARAM_MANDATORY_DIGEST>) <UTF8 string>
 
 The empty string, signifying that no digest may be specified.
 
@@ -43,6 +63,8 @@ The empty string, signifying that no digest may be specified.
 =over 4
 
 =item RFC 8032
+
+=item RFC 8410
 
 =back
 
@@ -62,25 +84,11 @@ An B<EVP_PKEY> context can be obtained by calling:
     EVP_PKEY_CTX *pctx =
         EVP_PKEY_CTX_new_from_name(NULL, "ED448", NULL);
 
-An B<ED25519> key can be generated like this:
+An B<X25519> key can be generated like this:
 
-    EVP_PKEY *pkey = NULL;
-    EVP_PKEY_CTX *pctx =
-        EVP_PKEY_CTX_new_from_name(NULL, "ED25519", NULL);
+    pkey = EVP_PKEY_Q_keygen(NULL, NULL, "X25519");
 
-    EVP_PKEY_keygen_init(pctx);
-    EVP_PKEY_gen(pctx, &pkey);
-    EVP_PKEY_CTX_free(pctx);
-
-An B<X25519> key can be generated in a similar way:
-
-    EVP_PKEY *pkey = NULL;
-    EVP_PKEY_CTX *pctx =
-        EVP_PKEY_CTX_new_from_name(NULL, "X25519", NULL);
-
-    EVP_PKEY_keygen_init(pctx);
-    EVP_PKEY_gen(pctx, &pkey);
-    EVP_PKEY_CTX_free(pctx);
+An B<X448>, B<ED25519>, or B<ED448> key can be generated likewise.
 
 =head1 SEE ALSO
 
@@ -90,7 +98,7 @@ L<EVP_SIGNATURE-ED25519(7)>, L<EVP_SIGNATURE-ED448(7)>
 
 =head1 COPYRIGHT
 
-Copyright 2020 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2020-2021 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

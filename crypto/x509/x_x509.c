@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -14,10 +14,6 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include "crypto/x509.h"
-
-#ifndef OPENSSL_NO_RFC3779
-DEFINE_STACK_OF(IPAddressFamily)
-#endif
 
 ASN1_SEQUENCE_enc(X509_CINF, enc, 0) = {
         ASN1_EXP_OPT(X509_CINF, version, ASN1_INTEGER, 0),
@@ -35,7 +31,7 @@ ASN1_SEQUENCE_enc(X509_CINF, enc, 0) = {
 IMPLEMENT_ASN1_FUNCTIONS(X509_CINF)
 /* X509 top level structure needs a bit of customisation */
 
-extern void policy_cache_free(X509_POLICY_CACHE *cache);
+extern void ossl_policy_cache_free(X509_POLICY_CACHE *cache);
 
 static int x509_cb(int operation, ASN1_VALUE **pval, const ASN1_ITEM *it,
                    void *exarg)
@@ -50,7 +46,7 @@ static int x509_cb(int operation, ASN1_VALUE **pval, const ASN1_ITEM *it,
         ASN1_OCTET_STRING_free(ret->skid);
         AUTHORITY_KEYID_free(ret->akid);
         CRL_DIST_POINTS_free(ret->crldp);
-        policy_cache_free(ret->policy_cache);
+        ossl_policy_cache_free(ret->policy_cache);
         GENERAL_NAMES_free(ret->altname);
         NAME_CONSTRAINTS_free(ret->nc);
 #ifndef OPENSSL_NO_RFC3779
@@ -91,7 +87,7 @@ static int x509_cb(int operation, ASN1_VALUE **pval, const ASN1_ITEM *it,
         ASN1_OCTET_STRING_free(ret->skid);
         AUTHORITY_KEYID_free(ret->akid);
         CRL_DIST_POINTS_free(ret->crldp);
-        policy_cache_free(ret->policy_cache);
+        ossl_policy_cache_free(ret->policy_cache);
         GENERAL_NAMES_free(ret->altname);
         NAME_CONSTRAINTS_free(ret->nc);
 #ifndef OPENSSL_NO_RFC3779
@@ -99,12 +95,53 @@ static int x509_cb(int operation, ASN1_VALUE **pval, const ASN1_ITEM *it,
         ASIdentifiers_free(ret->rfc3779_asid);
 #endif
         ASN1_OCTET_STRING_free(ret->distinguishing_id);
+        OPENSSL_free(ret->propq);
         break;
 
+    case ASN1_OP_DUP_POST:
+        {
+            X509 *old = exarg;
+
+            if (!ossl_x509_set0_libctx(ret, old->libctx, old->propq))
+                return 0;
+            if (old->cert_info.key != NULL) {
+                EVP_PKEY *pkey = X509_PUBKEY_get0(old->cert_info.key);
+
+                if (pkey != NULL) {
+                    pkey = EVP_PKEY_dup(pkey);
+                    if (pkey == NULL) {
+                        ERR_raise(ERR_LIB_X509, ERR_R_MALLOC_FAILURE);
+                        return 0;
+                    }
+                    if (!X509_PUBKEY_set(&ret->cert_info.key, pkey)) {
+                        EVP_PKEY_free(pkey);
+                        ERR_raise(ERR_LIB_X509, ERR_R_INTERNAL_ERROR);
+                        return 0;
+                    }
+                    EVP_PKEY_free(pkey);
+                }
+            }
+        }
+        break;
+    case ASN1_OP_GET0_LIBCTX:
+        {
+            OSSL_LIB_CTX **libctx = exarg;
+
+            *libctx = ret->libctx;
+        }
+        break;
+    case ASN1_OP_GET0_PROPQ:
+        {
+            const char **propq = exarg;
+
+            *propq = ret->propq;
+        }
+        break;
+    default:
+        break;
     }
 
     return 1;
-
 }
 
 ASN1_SEQUENCE_ref(X509, x509_cb) = {
@@ -115,6 +152,38 @@ ASN1_SEQUENCE_ref(X509, x509_cb) = {
 
 IMPLEMENT_ASN1_FUNCTIONS(X509)
 IMPLEMENT_ASN1_DUP_FUNCTION(X509)
+
+/*
+ * This should only be used if the X509 object was embedded inside another
+ * asn1 object and it needs a libctx to operate.
+ * Use X509_new_ex() instead if possible.
+ */
+int ossl_x509_set0_libctx(X509 *x, OSSL_LIB_CTX *libctx, const char *propq)
+{
+    if (x != NULL) {
+        x->libctx = libctx;
+        OPENSSL_free(x->propq);
+        x->propq = NULL;
+        if (propq != NULL) {
+            x->propq = OPENSSL_strdup(propq);
+            if (x->propq == NULL)
+                return 0;
+        }
+    }
+    return 1;
+}
+
+X509 *X509_new_ex(OSSL_LIB_CTX *libctx, const char *propq)
+{
+    X509 *cert = NULL;
+
+    cert = (X509 *)ASN1_item_new_ex(X509_it(), libctx, propq);
+    if (!ossl_x509_set0_libctx(cert, libctx, propq)) {
+        X509_free(cert);
+        cert = NULL;
+    }
+    return cert;
+}
 
 int X509_set_ex_data(X509 *r, int idx, void *arg)
 {
@@ -219,7 +288,7 @@ int i2d_X509_AUX(const X509 *a, unsigned char **pp)
     /* Allocate requisite combined storage */
     *pp = tmp = OPENSSL_malloc(length);
     if (tmp == NULL) {
-        X509err(X509_F_I2D_X509_AUX, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_X509, ERR_R_MALLOC_FAILURE);
         return -1;
     }
 

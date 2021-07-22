@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -13,13 +13,44 @@
 #include <openssl/conf.h>
 #include <openssl/safestack.h>
 #include "internal/provider.h"
+#include "internal/cryptlib.h"
+#include "provider_local.h"
 
 DEFINE_STACK_OF(OSSL_PROVIDER)
-DEFINE_STACK_OF(CONF_VALUE)
 
 /* PROVIDER config module */
 
-static STACK_OF(OSSL_PROVIDER) *activated_providers = NULL;
+typedef struct {
+    STACK_OF(OSSL_PROVIDER) *activated_providers;
+} PROVIDER_CONF_GLOBAL;
+
+static void *prov_conf_ossl_ctx_new(OSSL_LIB_CTX *libctx)
+{
+    PROVIDER_CONF_GLOBAL *pcgbl = OPENSSL_zalloc(sizeof(*pcgbl));
+
+    if (pcgbl == NULL)
+        return NULL;
+
+    return pcgbl;
+}
+
+static void prov_conf_ossl_ctx_free(void *vpcgbl)
+{
+    PROVIDER_CONF_GLOBAL *pcgbl = vpcgbl;
+
+    sk_OSSL_PROVIDER_pop_free(pcgbl->activated_providers,
+                              ossl_provider_free);
+
+    OSSL_TRACE(CONF, "Cleaned up providers\n");
+    OPENSSL_free(pcgbl);
+}
+
+static const OSSL_LIB_CTX_METHOD provider_conf_ossl_ctx_method = {
+    /* Must be freed before the provider store is freed */
+    OSSL_LIB_CTX_METHOD_PRIORITY_2,
+    prov_conf_ossl_ctx_new,
+    prov_conf_ossl_ctx_free,
+};
 
 static const char *skip_dot(const char *name)
 {
@@ -31,6 +62,7 @@ static const char *skip_dot(const char *name)
 }
 
 static int provider_conf_params(OSSL_PROVIDER *prov,
+                                OSSL_PROVIDER_INFO *provinfo,
                                 const char *name, const char *value,
                                 const CONF *cnf)
 {
@@ -58,29 +90,36 @@ static int provider_conf_params(OSSL_PROVIDER *prov,
                 return 0;
             buffer[buffer_len] = '\0';
             OPENSSL_strlcat(buffer, sectconf->name, sizeof(buffer));
-            if (!provider_conf_params(prov, buffer, sectconf->value, cnf))
+            if (!provider_conf_params(prov, provinfo, buffer, sectconf->value,
+                                      cnf))
                 return 0;
         }
 
         OSSL_TRACE1(CONF, "Provider params: finish section %s\n", value);
     } else {
         OSSL_TRACE2(CONF, "Provider params: %s = %s\n", name, value);
-        ok = ossl_provider_add_parameter(prov, name, value);
+        if (prov != NULL)
+            ok = ossl_provider_add_parameter(prov, name, value);
+        else
+            ok = ossl_provider_info_add_parameter(provinfo, name, value);
     }
 
     return ok;
 }
 
-static int provider_conf_load(OPENSSL_CTX *libctx, const char *name,
+static int provider_conf_load(OSSL_LIB_CTX *libctx, const char *name,
                               const char *value, const CONF *cnf)
 {
     int i;
     STACK_OF(CONF_VALUE) *ecmds;
     int soft = 0;
-    OSSL_PROVIDER *prov = NULL;
+    OSSL_PROVIDER *prov = NULL, *actual = NULL;
     const char *path = NULL;
     long activate = 0;
     int ok = 0;
+    PROVIDER_CONF_GLOBAL *pcgbl
+        = ossl_lib_ctx_get_data(libctx, OSSL_LIB_CTX_PROVIDER_CONF_INDEX,
+                                &provider_conf_ossl_ctx_method);
 
     name = skip_dot(name);
     OSSL_TRACE1(CONF, "Configuring provider %s\n", name);
@@ -88,7 +127,8 @@ static int provider_conf_load(OPENSSL_CTX *libctx, const char *name,
     ecmds = NCONF_get_section(cnf, value);
 
     if (!ecmds) {
-        CRYPTOerr(CRYPTO_F_PROVIDER_CONF_LOAD, CRYPTO_R_PROVIDER_SECTION_ERROR);
+        ERR_raise_data(ERR_LIB_CRYPTO, CRYPTO_R_PROVIDER_SECTION_ERROR,
+                       "section=%s not found", value);
         return 0;
     }
 
@@ -115,33 +155,65 @@ static int provider_conf_load(OPENSSL_CTX *libctx, const char *name,
             activate = 1;
     }
 
-    prov = ossl_provider_find(libctx, name, 1);
-    if (prov == NULL)
-        prov = ossl_provider_new(libctx, name, NULL, 1);
-    if (prov == NULL) {
-        if (soft)
-            ERR_clear_error();
-        return 0;
-    }
-
-    if (path != NULL)
-        ossl_provider_set_module_path(prov, path);
-
-    ok = provider_conf_params(prov, NULL, value, cnf);
-
-    if (ok && activate) {
-        if (!ossl_provider_activate(prov)) {
-            ok = 0;
-        } else {
-            if (activated_providers == NULL)
-                activated_providers = sk_OSSL_PROVIDER_new_null();
-            sk_OSSL_PROVIDER_push(activated_providers, prov);
-            ok = 1;
+    if (activate) {
+        prov = ossl_provider_find(libctx, name, 1);
+        if (prov == NULL)
+            prov = ossl_provider_new(libctx, name, NULL, 1);
+        if (prov == NULL) {
+            if (soft)
+                ERR_clear_error();
+            return 0;
         }
-    }
 
-    if (!(activate && ok))
-        ossl_provider_free(prov);
+        if (path != NULL)
+            ossl_provider_set_module_path(prov, path);
+
+        ok = provider_conf_params(prov, NULL, NULL, value, cnf);
+
+        if (ok) {
+            if (!ossl_provider_activate(prov, 1, 0)) {
+                ok = 0;
+            } else if (!ossl_provider_add_to_store(prov, &actual, 0)) {
+                ossl_provider_deactivate(prov);
+                ok = 0;
+            } else {
+                if (pcgbl->activated_providers == NULL)
+                    pcgbl->activated_providers = sk_OSSL_PROVIDER_new_null();
+                sk_OSSL_PROVIDER_push(pcgbl->activated_providers, actual);
+                ok = 1;
+            }
+        }
+
+        if (!ok)
+            ossl_provider_free(prov);
+    } else {
+        OSSL_PROVIDER_INFO entry;
+
+        memset(&entry, 0, sizeof(entry));
+        ok = 1;
+        if (name != NULL) {
+            entry.name = OPENSSL_strdup(name);
+            if (entry.name == NULL) {
+                ERR_raise(ERR_LIB_CRYPTO, ERR_R_MALLOC_FAILURE);
+                ok = 0;
+            }
+        }
+        if (ok && path != NULL) {
+            entry.path = OPENSSL_strdup(path);
+            if (entry.path == NULL) {
+                ERR_raise(ERR_LIB_CRYPTO, ERR_R_MALLOC_FAILURE);
+                ok = 0;
+            }
+        }
+        if (ok)
+            ok = provider_conf_params(NULL, &entry, NULL, value, cnf);
+        if (ok && (entry.path != NULL || entry.parameters != NULL))
+            ok = ossl_provider_info_add_to_store(libctx, &entry);
+        if (!ok || (entry.path == NULL && entry.parameters == NULL)) {
+            ossl_provider_info_clear(&entry);
+        }
+
+    }
 
     return ok;
 }
@@ -159,30 +231,22 @@ static int provider_conf_init(CONF_IMODULE *md, const CONF *cnf)
     elist = NCONF_get_section(cnf, CONF_imodule_get_value(md));
 
     if (!elist) {
-        CRYPTOerr(CRYPTO_F_PROVIDER_CONF_INIT,
-                  CRYPTO_R_PROVIDER_SECTION_ERROR);
+        ERR_raise(ERR_LIB_CRYPTO, CRYPTO_R_PROVIDER_SECTION_ERROR);
         return 0;
     }
 
     for (i = 0; i < sk_CONF_VALUE_num(elist); i++) {
         cval = sk_CONF_VALUE_value(elist, i);
-        if (!provider_conf_load(cnf->libctx, cval->name, cval->value, cnf))
+        if (!provider_conf_load(NCONF_get0_libctx((CONF *)cnf),
+                    cval->name, cval->value, cnf))
             return 0;
     }
 
     return 1;
 }
 
-
-static void provider_conf_deinit(CONF_IMODULE *md)
-{
-    sk_OSSL_PROVIDER_pop_free(activated_providers, ossl_provider_free);
-    activated_providers = NULL;
-    OSSL_TRACE(CONF, "Cleaned up providers\n");
-}
-
 void ossl_provider_add_conf_module(void)
 {
     OSSL_TRACE(CONF, "Adding config module 'providers'\n");
-    CONF_module_add("providers", provider_conf_init, provider_conf_deinit);
+    CONF_module_add("providers", provider_conf_init, NULL);
 }

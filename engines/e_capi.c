@@ -1,11 +1,14 @@
 /*
- * Copyright 2008-2018 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2008-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
+
+/* We need to use some deprecated APIs */
+#define OPENSSL_SUPPRESS_DEPRECATED
 
 #ifdef _WIN32
 # ifndef _WIN32_WINNT
@@ -30,9 +33,6 @@
 #  include <openssl/bn.h>
 #  include <openssl/rsa.h>
 #  include <openssl/dsa.h>
-
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(X509_NAME)
 
 /*
  * This module uses several "new" interfaces, among which is
@@ -600,9 +600,19 @@ void engine_load_capi_int(void)
     ENGINE *toadd = engine_capi();
     if (!toadd)
         return;
+    ERR_set_mark();
     ENGINE_add(toadd);
+    /*
+     * If the "add" worked, it gets a structural reference. So either way, we
+     * release our just-created reference.
+     */
     ENGINE_free(toadd);
-    ERR_clear_error();
+    /*
+     * If the "add" didn't work, it was probably a conflict because it was
+     * already added (eg. someone calling ENGINE_load_blah then calling
+     * ENGINE_load_builtin_engines() perhaps).
+     */
+    ERR_pop_to_mark();
 }
 # endif
 
@@ -1110,10 +1120,19 @@ static char *wide_to_asc(LPCWSTR wstr)
 {
     char *str;
     int len_0, sz;
+    size_t len_1;
 
     if (!wstr)
         return NULL;
-    len_0 = (int)wcslen(wstr) + 1; /* WideCharToMultiByte expects int */
+
+    len_1 = wcslen(wstr) + 1;
+
+    if (len_1 > INT_MAX) {
+	    CAPIerr(CAPI_F_WIDE_TO_ASC, CAPI_R_FUNCTION_NOT_SUPPORTED);
+	    return NULL;
+    }
+
+    len_0 = (int)len_1; /* WideCharToMultiByte expects int */
     sz = WideCharToMultiByte(CP_ACP, 0, wstr, len_0, NULL, 0, NULL, NULL);
     if (!sz) {
         CAPIerr(CAPI_F_WIDE_TO_ASC, CAPI_R_WIN32_ERROR);

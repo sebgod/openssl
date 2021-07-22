@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -22,6 +22,7 @@
 # include <openssl/objects.h>
 # include "crypto/evp.h"
 # include <openssl/idea.h>
+# include "evp_local.h"
 
 /* Can't use IMPLEMENT_BLOCK_CIPHER because IDEA_ecb_encrypt is different */
 
@@ -57,9 +58,9 @@ static int idea_init_key(EVP_CIPHER_CTX *ctx, const unsigned char *key,
                          const unsigned char *iv, int enc)
 {
     if (!enc) {
-        if (EVP_CIPHER_CTX_mode(ctx) == EVP_CIPH_OFB_MODE)
+        if (EVP_CIPHER_CTX_get_mode(ctx) == EVP_CIPH_OFB_MODE)
             enc = 1;
-        else if (EVP_CIPHER_CTX_mode(ctx) == EVP_CIPH_CFB_MODE)
+        else if (EVP_CIPHER_CTX_get_mode(ctx) == EVP_CIPH_CFB_MODE)
             enc = 1;
     }
     if (enc)

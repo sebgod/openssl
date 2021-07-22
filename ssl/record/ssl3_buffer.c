@@ -66,15 +66,13 @@ int ssl3_setup_read_buffer(SSL *s)
              * We assume we're so doomed that we won't even be able to send an
              * alert.
              */
-            SSLfatal(s, SSL_AD_NO_ALERT, SSL_F_SSL3_SETUP_READ_BUFFER,
-                     ERR_R_MALLOC_FAILURE);
+            SSLfatal(s, SSL_AD_NO_ALERT, ERR_R_MALLOC_FAILURE);
             return 0;
         }
         b->buf = p;
         b->len = len;
     }
 
-    RECORD_LAYER_set_packet(&s->rlayer, &(b->buf[0]));
     return 1;
 }
 
@@ -94,7 +92,7 @@ int ssl3_setup_write_buffer(SSL *s, size_t numwpipes, size_t len)
             headerlen = SSL3_RT_HEADER_LENGTH;
 
 #if defined(SSL3_ALIGN_PAYLOAD) && SSL3_ALIGN_PAYLOAD!=0
-        align = (-SSL3_RT_HEADER_LENGTH) & (SSL3_ALIGN_PAYLOAD - 1);
+        align = SSL3_ALIGN_PAYLOAD - 1;
 #endif
 
         len = ssl_get_max_send_fragment(s)
@@ -126,8 +124,7 @@ int ssl3_setup_write_buffer(SSL *s, size_t numwpipes, size_t len)
                      * buffers. We assume we're so doomed that we won't even be able
                      * to send an alert.
                      */
-                    SSLfatal(s, SSL_AD_NO_ALERT,
-                            SSL_F_SSL3_SETUP_WRITE_BUFFER, ERR_R_MALLOC_FAILURE);
+                    SSLfatal(s, SSL_AD_NO_ALERT, ERR_R_MALLOC_FAILURE);
                     return 0;
                 }
             } else {
@@ -180,6 +177,8 @@ int ssl3_release_read_buffer(SSL *s)
     SSL3_BUFFER *b;
 
     b = RECORD_LAYER_get_rbuf(&s->rlayer);
+    if (s->options & SSL_OP_CLEANSE_PLAINTEXT)
+        OPENSSL_cleanse(b->buf, b->len);
     OPENSSL_free(b->buf);
     b->buf = NULL;
     return 1;

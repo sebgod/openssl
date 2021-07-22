@@ -23,11 +23,11 @@ B<-crl> |
 B<-newca>
 [B<-extra-I<cmd>> I<parameter>]
 
-B<CA.pl> B<-pkcs12> [B<-extra-pkcs12> I<parameter>] [I<certname>]
+B<CA.pl> B<-pkcs12> [I<certname>]
 
-B<CA.pl> B<-verify> [B<-extra-verify> I<parameter>] I<certfile> ...
+B<CA.pl> B<-verify> I<certfile> ...
 
-B<CA.pl> B<-revoke> [B<-extra-ca> I<parameter>] I<certfile> [I<reason>]
+B<CA.pl> B<-revoke> I<certfile> [I<reason>]
 
 =head1 DESCRIPTION
 
@@ -57,7 +57,7 @@ the correct path of the configuration file.
 
 =over 4
 
-=item B<?>, B<-h>, B<-help>
+=item B<-?>, B<-h>, B<-help>
 
 Prints a usage message.
 
@@ -113,7 +113,7 @@ written to standard output.
 
 =item B<-signCA>
 
-This option is the same as the B<-signreq> option except it uses the
+This option is the same as the B<-sign> option except it uses the
 configuration file section B<v3_ca> and so makes the signed request a
 valid CA certificate. This is useful when creating intermediate CA from
 a root CA.  Extra params are passed to L<openssl-ca(1)>.
@@ -165,7 +165,7 @@ the request and finally create a PKCS#12 file containing it.
 
  CA.pl -newca
  CA.pl -newreq
- CA.pl -signreq
+ CA.pl -sign
  CA.pl -pkcs12 "My Test Certificate"
 
 =head1 ENVIRONMENT
@@ -189,7 +189,7 @@ L<config(5)>
 
 =head1 COPYRIGHT
 
-Copyright 2000-2020 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2000-2021 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

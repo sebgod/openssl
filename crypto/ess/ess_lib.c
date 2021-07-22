@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -11,20 +11,19 @@
 #include <openssl/x509v3.h>
 #include <openssl/err.h>
 #include <openssl/ess.h>
+#include "internal/sizes.h"
 #include "crypto/ess.h"
+#include "crypto/x509.h"
 
-DEFINE_STACK_OF(ESS_CERT_ID)
-DEFINE_STACK_OF(ESS_CERT_ID_V2)
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(GENERAL_NAME)
-
-static ESS_CERT_ID *ESS_CERT_ID_new_init(X509 *cert, int issuer_needed);
+static ESS_CERT_ID *ESS_CERT_ID_new_init(const X509 *cert,
+                                         int set_issuer_serial);
 static ESS_CERT_ID_V2 *ESS_CERT_ID_V2_new_init(const EVP_MD *hash_alg,
-                                               X509 *cert, int issuer_needed);
+                                               const X509 *cert,
+                                               int set_issuer_serial);
 
-ESS_SIGNING_CERT *ESS_SIGNING_CERT_new_init(X509 *signcert,
-                                            STACK_OF(X509) *certs,
-                                            int issuer_needed)
+ESS_SIGNING_CERT *OSSL_ESS_signing_cert_new_init(const X509 *signcert,
+                                                 const STACK_OF(X509) *certs,
+                                                 int set_issuer_serial)
 {
     ESS_CERT_ID *cid = NULL;
     ESS_SIGNING_CERT *sc;
@@ -36,11 +35,12 @@ ESS_SIGNING_CERT *ESS_SIGNING_CERT_new_init(X509 *signcert,
         && (sc->cert_ids = sk_ESS_CERT_ID_new_null()) == NULL)
         goto err;
 
-    if ((cid = ESS_CERT_ID_new_init(signcert, issuer_needed)) == NULL
+    if ((cid = ESS_CERT_ID_new_init(signcert, set_issuer_serial)) == NULL
         || !sk_ESS_CERT_ID_push(sc->cert_ids, cid))
         goto err;
     for (i = 0; i < sk_X509_num(certs); ++i) {
         X509 *cert = sk_X509_value(certs, i);
+
         if ((cid = ESS_CERT_ID_new_init(cert, 1)) == NULL
             || !sk_ESS_CERT_ID_push(sc->cert_ids, cid))
             goto err;
@@ -50,18 +50,17 @@ ESS_SIGNING_CERT *ESS_SIGNING_CERT_new_init(X509 *signcert,
  err:
     ESS_SIGNING_CERT_free(sc);
     ESS_CERT_ID_free(cid);
-    ESSerr(ESS_F_ESS_SIGNING_CERT_NEW_INIT, ERR_R_MALLOC_FAILURE);
+    ERR_raise(ERR_LIB_ESS, ERR_R_MALLOC_FAILURE);
     return NULL;
 }
 
-static ESS_CERT_ID *ESS_CERT_ID_new_init(X509 *cert, int issuer_needed)
+static ESS_CERT_ID *ESS_CERT_ID_new_init(const X509 *cert,
+                                         int set_issuer_serial)
 {
     ESS_CERT_ID *cid = NULL;
     GENERAL_NAME *name = NULL;
     unsigned char cert_sha1[SHA_DIGEST_LENGTH];
 
-    /* Call for side-effect of computing hash and caching extensions */
-    X509_check_purpose(cert, -1, 0);
     if ((cid = ESS_CERT_ID_new()) == NULL)
         goto err;
     if (!X509_digest(cert, EVP_sha1(), cert_sha1, NULL))
@@ -70,7 +69,7 @@ static ESS_CERT_ID *ESS_CERT_ID_new_init(X509 *cert, int issuer_needed)
         goto err;
 
     /* Setting the issuer/serial if requested. */
-    if (!issuer_needed)
+    if (!set_issuer_serial)
         return cid;
 
     if (cid->issuer_serial == NULL
@@ -85,22 +84,23 @@ static ESS_CERT_ID *ESS_CERT_ID_new_init(X509 *cert, int issuer_needed)
         goto err;
     name = NULL;            /* Ownership is lost. */
     ASN1_INTEGER_free(cid->issuer_serial->serial);
-    if (!(cid->issuer_serial->serial =
-          ASN1_INTEGER_dup(X509_get_serialNumber(cert))))
+    if ((cid->issuer_serial->serial =
+          ASN1_INTEGER_dup(X509_get0_serialNumber(cert))) == NULL)
         goto err;
 
     return cid;
  err:
     GENERAL_NAME_free(name);
     ESS_CERT_ID_free(cid);
-    ESSerr(ESS_F_ESS_CERT_ID_NEW_INIT, ERR_R_MALLOC_FAILURE);
+    ERR_raise(ERR_LIB_ESS, ERR_R_MALLOC_FAILURE);
     return NULL;
 }
 
-ESS_SIGNING_CERT_V2 *ESS_SIGNING_CERT_V2_new_init(const EVP_MD *hash_alg,
-                                                  X509 *signcert,
-                                                  STACK_OF(X509) *certs,
-                                                  int issuer_needed)
+ESS_SIGNING_CERT_V2 *OSSL_ESS_signing_cert_v2_new_init(const EVP_MD *hash_alg,
+                                                       const X509 *signcert,
+                                                       const
+                                                       STACK_OF(X509) *certs,
+                                                       int set_issuer_serial)
 {
     ESS_CERT_ID_V2 *cid = NULL;
     ESS_SIGNING_CERT_V2 *sc;
@@ -108,7 +108,8 @@ ESS_SIGNING_CERT_V2 *ESS_SIGNING_CERT_V2_new_init(const EVP_MD *hash_alg,
 
     if ((sc = ESS_SIGNING_CERT_V2_new()) == NULL)
         goto err;
-    if ((cid = ESS_CERT_ID_V2_new_init(hash_alg, signcert, issuer_needed)) == NULL)
+    cid = ESS_CERT_ID_V2_new_init(hash_alg, signcert, set_issuer_serial);
+    if (cid == NULL)
         goto err;
     if (!sk_ESS_CERT_ID_V2_push(sc->cert_ids, cid))
         goto err;
@@ -128,12 +129,13 @@ ESS_SIGNING_CERT_V2 *ESS_SIGNING_CERT_V2_new_init(const EVP_MD *hash_alg,
  err:
     ESS_SIGNING_CERT_V2_free(sc);
     ESS_CERT_ID_V2_free(cid);
-    ESSerr(ESS_F_ESS_SIGNING_CERT_V2_NEW_INIT, ERR_R_MALLOC_FAILURE);
+    ERR_raise(ERR_LIB_ESS, ERR_R_MALLOC_FAILURE);
     return NULL;
 }
 
 static ESS_CERT_ID_V2 *ESS_CERT_ID_V2_new_init(const EVP_MD *hash_alg,
-                                               X509 *cert, int issuer_needed)
+                                               const X509 *cert,
+                                               int set_issuer_serial)
 {
     ESS_CERT_ID_V2 *cid;
     GENERAL_NAME *name = NULL;
@@ -146,7 +148,7 @@ static ESS_CERT_ID_V2 *ESS_CERT_ID_V2_new_init(const EVP_MD *hash_alg,
     if ((cid = ESS_CERT_ID_V2_new()) == NULL)
         goto err;
 
-    if (hash_alg != EVP_sha256()) {
+    if (!EVP_MD_is_a(hash_alg, SN_sha256)) {
         alg = X509_ALGOR_new();
         if (alg == NULL)
             goto err;
@@ -165,7 +167,7 @@ static ESS_CERT_ID_V2 *ESS_CERT_ID_V2_new_init(const EVP_MD *hash_alg,
     if (!ASN1_OCTET_STRING_set(cid->hash, hash, hash_len))
         goto err;
 
-    if (!issuer_needed)
+    if (!set_issuer_serial)
         return cid;
 
     if ((cid->issuer_serial = ESS_ISSUER_SERIAL_new()) == NULL)
@@ -179,7 +181,7 @@ static ESS_CERT_ID_V2 *ESS_CERT_ID_V2_new_init(const EVP_MD *hash_alg,
         goto err;
     name = NULL;            /* Ownership is lost. */
     ASN1_INTEGER_free(cid->issuer_serial->serial);
-    cid->issuer_serial->serial = ASN1_INTEGER_dup(X509_get_serialNumber(cert));
+    cid->issuer_serial->serial = ASN1_INTEGER_dup(X509_get0_serialNumber(cert));
     if (cid->issuer_serial->serial == NULL)
         goto err;
 
@@ -188,88 +190,126 @@ static ESS_CERT_ID_V2 *ESS_CERT_ID_V2_new_init(const EVP_MD *hash_alg,
     X509_ALGOR_free(alg);
     GENERAL_NAME_free(name);
     ESS_CERT_ID_V2_free(cid);
-    ESSerr(ESS_F_ESS_CERT_ID_V2_NEW_INIT, ERR_R_MALLOC_FAILURE);
+    ERR_raise(ERR_LIB_ESS, ERR_R_MALLOC_FAILURE);
     return NULL;
 }
 
-ESS_SIGNING_CERT *ESS_SIGNING_CERT_get(PKCS7_SIGNER_INFO *si)
+static int ess_issuer_serial_cmp(const ESS_ISSUER_SERIAL *is, const X509 *cert)
 {
-    ASN1_TYPE *attr;
-    const unsigned char *p;
-    attr = PKCS7_get_signed_attribute(si, NID_id_smime_aa_signingCertificate);
-    if (!attr)
-        return NULL;
-    p = attr->value.sequence->data;
-    return d2i_ESS_SIGNING_CERT(NULL, &p, attr->value.sequence->length);
+    GENERAL_NAME *issuer;
+
+    if (is == NULL || cert == NULL || sk_GENERAL_NAME_num(is->issuer) != 1)
+        return -1;
+
+    issuer = sk_GENERAL_NAME_value(is->issuer, 0);
+    if (issuer->type != GEN_DIRNAME
+        || X509_NAME_cmp(issuer->d.dirn, X509_get_issuer_name(cert)) != 0)
+        return -1;
+
+    return ASN1_INTEGER_cmp(is->serial, X509_get0_serialNumber(cert));
 }
 
-ESS_SIGNING_CERT_V2 *ESS_SIGNING_CERT_V2_get(PKCS7_SIGNER_INFO *si)
+/*
+ * Find the cert in |certs| referenced by |cid| if not NULL, else by |cid_v2|.
+ * The cert must be the first one in |certs| if and only if |index| is 0.
+ * Return 0 on not found, -1 on error, else 1 + the position in |certs|.
+ */
+static int find(const ESS_CERT_ID *cid, const ESS_CERT_ID_V2 *cid_v2,
+                int index, const STACK_OF(X509) *certs)
 {
-    ASN1_TYPE *attr;
-    const unsigned char *p;
+    const X509 *cert;
+    EVP_MD *md = NULL;
+    char name[OSSL_MAX_NAME_SIZE];
+    unsigned char cert_digest[EVP_MAX_MD_SIZE];
+    unsigned int len, cid_hash_len;
+    const ESS_ISSUER_SERIAL *is;
+    int i;
+    int ret = -1;
 
-    attr = PKCS7_get_signed_attribute(si, NID_id_smime_aa_signingCertificateV2);
-    if (attr == NULL)
-        return NULL;
-    p = attr->value.sequence->data;
-    return d2i_ESS_SIGNING_CERT_V2(NULL, &p, attr->value.sequence->length);
+    if (cid == NULL && cid_v2 == NULL) {
+        ERR_raise(ERR_LIB_ESS, ERR_R_PASSED_INVALID_ARGUMENT);
+        return -1;
+    }
+
+    if (cid != NULL)
+        strcpy(name, "SHA1");
+    else if (cid_v2->hash_alg == NULL)
+        strcpy(name, "SHA256");
+    else
+        OBJ_obj2txt(name, sizeof(name), cid_v2->hash_alg->algorithm, 0);
+
+    (void)ERR_set_mark();
+    md = EVP_MD_fetch(NULL, name, NULL);
+
+    if (md == NULL)
+        md = (EVP_MD *)EVP_get_digestbyname(name);
+
+    if (md == NULL) {
+        (void)ERR_clear_last_mark();
+        ERR_raise(ERR_LIB_ESS, ESS_R_ESS_DIGEST_ALG_UNKNOWN);
+        goto end;
+    }
+    (void)ERR_pop_to_mark();
+
+    for (i = 0; i < sk_X509_num(certs); ++i) {
+        cert = sk_X509_value(certs, i);
+
+        cid_hash_len = cid != NULL ? cid->hash->length : cid_v2->hash->length;
+        if (!X509_digest(cert, md, cert_digest, &len)
+                || cid_hash_len != len) {
+            ERR_raise(ERR_LIB_ESS, ESS_R_ESS_CERT_DIGEST_ERROR);
+            goto end;
+        }
+
+        if (memcmp(cid != NULL ? cid->hash->data : cid_v2->hash->data,
+                   cert_digest, len) == 0) {
+            is = cid != NULL ? cid->issuer_serial : cid_v2->issuer_serial;
+            /* Well, it's not really required to match the serial numbers. */
+            if (is == NULL || ess_issuer_serial_cmp(is, cert) == 0) {
+                if ((i == 0) == (index == 0)) {
+                    ret = i + 1;
+                    goto end;
+                }
+                ERR_raise(ERR_LIB_ESS, ESS_R_ESS_CERT_ID_WRONG_ORDER);
+                goto end;
+            }
+        }
+    }
+
+    ret = 0;
+    ERR_raise(ERR_LIB_ESS, ESS_R_ESS_CERT_ID_NOT_FOUND);
+end:
+    EVP_MD_free(md);
+    return ret;
 }
 
-int ESS_SIGNING_CERT_add(PKCS7_SIGNER_INFO *si, ESS_SIGNING_CERT *sc)
+int OSSL_ESS_check_signing_certs(const ESS_SIGNING_CERT *ss,
+                                 const ESS_SIGNING_CERT_V2 *ssv2,
+                                 const STACK_OF(X509) *chain,
+                                 int require_signing_cert)
 {
-    ASN1_STRING *seq = NULL;
-    unsigned char *p, *pp = NULL;
-    int len;
+    int n_v1 = ss == NULL ? -1 : sk_ESS_CERT_ID_num(ss->cert_ids);
+    int n_v2 = ssv2 == NULL ? -1 : sk_ESS_CERT_ID_V2_num(ssv2->cert_ids);
+    int i, ret;
 
-    len = i2d_ESS_SIGNING_CERT(sc, NULL);
-    if ((pp = OPENSSL_malloc(len)) == NULL) {
-        ESSerr(ESS_F_ESS_SIGNING_CERT_ADD, ERR_R_MALLOC_FAILURE);
-        goto err;
+    if (require_signing_cert && ss == NULL && ssv2 == NULL) {
+        ERR_raise(ERR_LIB_CMS, ESS_R_MISSING_SIGNING_CERTIFICATE_ATTRIBUTE);
+        return -1;
     }
-    p = pp;
-    i2d_ESS_SIGNING_CERT(sc, &p);
-    if ((seq = ASN1_STRING_new()) == NULL || !ASN1_STRING_set(seq, pp, len)) {
-        ESSerr(ESS_F_ESS_SIGNING_CERT_ADD, ERR_R_MALLOC_FAILURE);
-        goto err;
+    if (n_v1 == 0 || n_v2 == 0) {
+        ERR_raise(ERR_LIB_ESS, ESS_R_EMPTY_ESS_CERT_ID_LIST);
+        return -1;
     }
-    OPENSSL_free(pp);
-    pp = NULL;
-    return PKCS7_add_signed_attribute(si,
-                                      NID_id_smime_aa_signingCertificate,
-                                      V_ASN1_SEQUENCE, seq);
- err:
-    ASN1_STRING_free(seq);
-    OPENSSL_free(pp);
-
-    return 0;
-}
-
-int ESS_SIGNING_CERT_V2_add(PKCS7_SIGNER_INFO *si,
-                            ESS_SIGNING_CERT_V2 *sc)
-{
-    ASN1_STRING *seq = NULL;
-    unsigned char *p, *pp = NULL;
-    int len = i2d_ESS_SIGNING_CERT_V2(sc, NULL);
-
-    if ((pp = OPENSSL_malloc(len)) == NULL) {
-        ESSerr(ESS_F_ESS_SIGNING_CERT_V2_ADD, ERR_R_MALLOC_FAILURE);
-        goto err;
+    /* If both ss and ssv2 exist, as required evaluate them independently. */
+    for (i = 0; i < n_v1; i++) {
+        ret = find(sk_ESS_CERT_ID_value(ss->cert_ids, i), NULL, i, chain);
+        if (ret <= 0)
+            return ret;
     }
-
-    p = pp;
-    i2d_ESS_SIGNING_CERT_V2(sc, &p);
-    if ((seq = ASN1_STRING_new()) == NULL || !ASN1_STRING_set(seq, pp, len)) {
-        ESSerr(ESS_F_ESS_SIGNING_CERT_V2_ADD, ERR_R_MALLOC_FAILURE);
-        goto err;
+    for (i = 0; i < n_v2; i++) {
+        ret = find(NULL, sk_ESS_CERT_ID_V2_value(ssv2->cert_ids, i), i, chain);
+        if (ret <= 0)
+            return ret;
     }
-
-    OPENSSL_free(pp);
-    pp = NULL;
-    return PKCS7_add_signed_attribute(si,
-                                      NID_id_smime_aa_signingCertificateV2,
-                                      V_ASN1_SEQUENCE, seq);
- err:
-    ASN1_STRING_free(seq);
-    OPENSSL_free(pp);
-    return 0;
+    return 1;
 }

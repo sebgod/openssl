@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -16,6 +16,7 @@
 #include <openssl/trace.h>
 #include "internal/bio.h"
 #include "internal/nelem.h"
+#include "internal/refcount.h"
 #include "crypto/cryptlib.h"
 
 #include "e_os.h"                /* strcasecmp for Windows */
@@ -126,14 +127,19 @@ static const struct trace_category_st trace_categories[] = {
     TRACE_CATEGORY_(TLS),
     TRACE_CATEGORY_(TLS_CIPHER),
     TRACE_CATEGORY_(CONF),
+#ifndef OPENSSL_NO_ENGINE
     TRACE_CATEGORY_(ENGINE_TABLE),
     TRACE_CATEGORY_(ENGINE_REF_COUNT),
+#endif
     TRACE_CATEGORY_(PKCS5V2),
     TRACE_CATEGORY_(PKCS12_KEYGEN),
     TRACE_CATEGORY_(PKCS12_DECRYPT),
     TRACE_CATEGORY_(X509V3_POLICY),
     TRACE_CATEGORY_(BN_CTX),
     TRACE_CATEGORY_(STORE),
+    TRACE_CATEGORY_(DECODER),
+    TRACE_CATEGORY_(ENCODER),
+    TRACE_CATEGORY_(REF_COUNT)
 };
 
 const char *OSSL_trace_get_category_name(int num)
@@ -464,7 +470,8 @@ BIO *OSSL_trace_begin(int category)
     prefix = trace_channels[category].prefix;
 
     if (channel != NULL) {
-        CRYPTO_THREAD_write_lock(trace_lock);
+        if (!CRYPTO_THREAD_write_lock(trace_lock))
+            return NULL;
         current_channel = channel;
         switch (trace_channels[category].type) {
         case SIMPLE_CHANNEL:
